@@ -1,0 +1,15 @@
+---
+title: Big Data Analytics using Apache Spark
+subtitle: CN6022 - Big Data Infrastructure and Manipulation
+author:
+  - Jayrup Nakawala (u2613621)
+  - Yogi Patel (u2536809)
+  - Jasmi Alasapuri (u2571395)
+toc: true
+format: pdf
+bibliography: references.bib
+---
+
+## Task 1: Understanding the Data
+
+{{< include 01_task/_main.qmd >}}
