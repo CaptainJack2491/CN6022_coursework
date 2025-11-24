@@ -6,10 +6,11 @@ author:
   - Yogi Patel (u2536809)
   - Jasmi Alasapuri (u2571395)
 toc: true
+number-sections: true
 format: pdf
 bibliography: references.bib
 ---
 
-## Task 1: Understanding the Data
+\newpage
 
 {{< include 01_task/_main.qmd >}}
