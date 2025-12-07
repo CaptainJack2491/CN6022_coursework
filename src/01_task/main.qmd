@@ -1,0 +1,203 @@
+---
+title: "Stellar Data Analysis"
+author: 
+  - Jayrup Nakawala (u2613621)
+  - Yogi Patel (u2536809)
+  - Jasmi Alasapuri (u2571395)
+format:
+  html:
+    # code-fold: true
+    theme: cosmo
+    embed-resources: true
+toc: true
+jupyter: python3
+execute:
+  freeze: auto
+---
+
+# Introduction
+
+## Project Overview
+
+This project aims to demonstrate advanced Big Data manipulation and analytics using **Apache Spark SQL**. While the module provided a baseline dataset (Air Flight Status), we have elected to utilize the **ESA Gaia Data Release 3 (DR3)** for this analysis. Gaia is widely considered the largest and most complex astronomical catalog in human history, containing astrometric and photometric data for over 1.8 billion sources.
+
+## Dataset Selection and Justification
+
+The core requirement for this coursework was to utilize a dataset that exceeds the volume and complexity of the provided sample. The Gaia DR3 dataset fits this criterion perfectly for three reasons:
+
+1.  **Volume:** Even a 1% subset of Gaia (approximately 3 million rows) significantly exceeds the size of the standard flight dataset, requiring distributed computing techniques to process efficiently.
+2.  **Complexity:** Unlike the flat structure of flight logs, astronomical data requires complex feature engineering (e.g., calculating Absolute Magnitude from Parallax).
+3.  **Scientific Relevance:** This dataset allows for genuine astrophysical discovery including the identification of White Dwarfs and Binary Systems.
+
+## Data Acquisition Strategy: The "Two-Tier" Architecture
+
+Ingesting the entire 1.8 billion row catalog is computationally infeasible for this project's scope. Furthermore, a simple random sample introduces **Malmquist Bias**, where bright, distant stars drown out faint, local objects. To resolve this, we architected a **Two-Tier Data Strategy**, acquiring two distinct datasets via the ESA Archive (ADQL):
+
+  - **Dataset A: The "Galactic Survey" (Macro-Analysis):** A random 1% sample of the entire sky (\~3 million rows). This "Deep Field" dataset is used to map the broad structure of the Milky Way and analyze general stellar demographics, _breadth over precision_
+  - **Dataset B: The "Local Bubble" (Micro-Physics):** A volume-limited sample of all stars within 100 parsecs ($distance \le 100pc$). This high-precision dataset eliminates distance-related noise, allowing us to detect faint objects like **White Dwarfs** and **Red Giants** that would otherwise be invisible, _precision over breadth_.
+
+### Data Schema and Key Columns
+
+The following columns from the Gaia dataset will be used in our analysis:
+
+*   **`source_id`**: Unique identifier for each star. (64-bit Integer)
+*   **`ra`**: Right Ascension (celestial longitude). (Double Precision)
+*   **`dec`**: Declination (celestial latitude). (Double Precision)
+*   **`parallax`**: Parallax in milliarcseconds, used to calculate distance ($d = 1/p$). (Double Precision)
+*   **`parallax_error`**: The uncertainty in the parallax measurement. (Single Precision)
+*   **`pmra`**: Proper motion in the direction of Right Ascension. (Double Precision)
+*   **`pmdec`**: Proper motion in the direction of Declination. (Double Precision)
+*   **`phot_g_mean_mag`**: Mean apparent magnitude in the G-band (a measure of brightness as seen from Earth). (Single Precision)
+*   **`bp_rp`**: The blue-red color index, a proxy for the star's surface temperature. (Single Precision)
+*   **`teff_gspphot`**: Effective temperature of the star's photosphere, derived from photometry. (Single Precision)
+
+## Team Structure and Objectives
+
+The analysis is divided into three distinct workstreams, each focusing on a different aspect of the data:
+
+  * **Jasmi (Stellar Demographics):** Focuses on classifying star populations (H-R Diagram) and identifying high-velocity outliers using the Galactic Survey.
+  * **Yogi (Galactic Structure):** detailed mapping of the Milky Way's density and analysis of measurement error rates across the sky.
+  * **Jayrup (Exotic Star Hunting):** Utilizes the high-precision "Local Bubble" data to detect rare stellar remnants and gravitationally bound binary star systems.
+
+
+## Understanding the Data
+
+### Installing dependencies
+
+```{python}
+!pip install pyspark astroquery pandas pyarrow seaborn matplotlib --quiet
+```
+
+### Downloading the Datasets
+
+```{python}
+# from astroquery.gaia import Gaia
+import os
+
+output_dir = "../data"
+os.makedirs(output_dir, exist_ok=True)
+
+def save_strict_parquet(results, filename):
+    """
+    Converts Astropy Table to Pandas with strict Gaia Data Model types.
+    """
+    df = results.to_pandas()
+    
+    # 1. Enforce Source_ID as 64-bit Integer (Long)
+    df['source_id'] = df['source_id'].astype('int64')
+
+    # 2. Enforce Double Precision (float64) for Angles/Velocity
+    doubles = ['ra', 'dec', 'parallax', 'pmra', 'pmdec']
+    for col in doubles:
+        if col in df.columns:
+            df[col] = df[col].astype('float64')
+
+    # 3. Enforce Single Precision (float32) for Errors/Magnitudes
+    # This saves 50% RAM on these columns vs standard floats.
+    floats = ['parallax_error', 'bp_rp', 'phot_g_mean_mag','teff_gspphot']
+    for col in floats:
+        if col in df.columns:
+            df[col] = df[col].astype('float32')
+            
+    # Save
+    print(f">> Saving {len(df)} rows to {filename}...")
+    df.to_parquet(filename, index=False)
+
+
+# --- JOB 1: SURVEY ---
+survey_file = os.path.join(output_dir, "gaia_survey.parquet")
+if not os.path.exists(survey_file):
+    print(">> Downloading Survey...")
+    q = """
+    SELECT source_id, ra, dec, parallax, parallax_error, pmra, pmdec, 
+           phot_g_mean_mag, bp_rp, teff_gspphot
+    FROM gaiadr3.gaia_source
+    WHERE parallax > 0 AND phot_g_mean_mag < 19 AND random_index < 3000000
+    """
+    job = Gaia.launch_job_async(q)
+    save_strict_parquet(job.get_results(), survey_file)
+else:
+    print(">> Survey already downloaded.")
+
+# --- JOB 2: LOCAL BUBBLE ---
+local_file = os.path.join(output_dir, "gaia_100pc.parquet")
+if not os.path.exists(local_file):
+    print(">> Downloading Local Bubble...")
+    q = """
+    SELECT source_id, ra, dec, parallax, parallax_error, pmra, pmdec, 
+           phot_g_mean_mag, bp_rp, teff_gspphot
+    FROM gaiadr3.gaia_source
+    WHERE parallax >= 10 AND parallax_over_error > 5
+    """
+    job = Gaia.launch_job_async(q)
+    save_strict_parquet(job.get_results(), local_file)
+else:
+    print(">> Local Bubble already downloaded.")
+
+print(">> Done.")
+```
+
+### Exploring the Datasets
+ 
+```{python}
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, mean, min, max, stddev, expr
+
+# Initialize Spark
+spark = SparkSession.builder \
+    .appName("Gaia_Data_Exploration") \
+    .config("spark.driver.memory", "4g") \
+    .getOrCreate()
+
+# Load Datasets
+survey_path = "../data/gaia_survey.parquet"
+local_path = "../data/gaia_100pc.parquet"
+
+df_survey = spark.read.parquet(survey_path)
+df_local = spark.read.parquet(local_path)
+
+print(">>> DATASET 1: GALACTIC SURVEY (Macro)")
+print(f"Total Rows: {df_survey.count():,}")
+df_survey.printSchema()
+
+print("\n>>> DATASET 2: LOCAL BUBBLE (Micro)")
+print(f"Total Rows: {df_local.count():,}")
+df_local.printSchema()
+
+# ====================================================
+# 1. PHYSICAL COMPARISON (The "Two-Tier" Proof)
+# ====================================================
+# We demonstrate that the two datasets cover different physical regions.
+# Survey = Distant, Local = Nearby.
+
+print("\n>>> STATISTICAL COMPARISON: PARALLAX (Distance)")
+print("Note: Distance (pc) is approx 1000 / parallax.")
+
+print("-- Survey Dataset Stats --")
+df_survey.select("parallax", "phot_g_mean_mag", "pmra").describe().show()
+
+print("-- Local Bubble Stats --")
+df_local.select("parallax", "phot_g_mean_mag", "pmra").describe().show()
+
+# ====================================================
+# 2. QUALITY CHECK (Null Analysis)
+# ====================================================
+# Showing that the Survey has missing data (real world messiness) 
+# while Local Bubble is cleaner (filtered).
+
+def count_nulls(df):
+    return df.select([count(when(col(c).isNull(), c)).alias(c) for c in df.columns])
+
+# We only check critical columns
+from pyspark.sql.functions import when
+cols_to_check = ["parallax", "pmra", "teff_gspphot", "bp_rp"]
+
+print("\n>>> NULL VALUE ANALYSIS (Survey Dataset)")
+df_survey.select([count(when(col(c).isNull(), c)).alias(c) for c in cols_to_check]).show()
+
+print("\n>>> NULL VALUE ANALYSIS (Local Dataset)")
+df_local.select([count(when(col(c).isNull(), c)).alias(c) for c in cols_to_check]).show()
+
+spark.stop()
+```
+
