@@ -7,7 +7,7 @@ author:
 format:
   html:
     # code-fold: true
-    theme: cosmo
+    theme: lux
     embed-resources: true
 toc: true
 jupyter: python3
@@ -15,9 +15,12 @@ execute:
   freeze: auto
 ---
 
+# Query 2.1: Galactic Plane vs Halo
+
 ```{python}
+
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, abs, radians, sin, cos, asin, degrees, floor, count, avg, stddev, rank, when, sqrt, pow
+from pyspark.sql.functions import * 
 import pyspark.sql.functions as F
 from pyspark.sql.window import Window
 import seaborn as sns
@@ -27,262 +30,396 @@ import numpy as np
 
 # Initialize Spark
 spark = SparkSession.builder \
-    .appName("Member2_Galactic_Structure") \
-    .config("spark.driver.memory", "4g") \
-    .getOrCreate()
+.appName("Member2_Galactic_Structure") \
+.config("spark.driver.memory", "4g") \
+.getOrCreate()
 
-# Load the "Deep Field" Survey Data
+# 1. Load the Data
 parquet_path = "../data/gaia_survey.parquet"
+
 df = spark.read.parquet(parquet_path)
 
+
+# describe the gaia_survey data
 df.describe().show()
-# ==========================================
-# 🌌 QUERY 2.1: The "Real" Galactic Plane
-# ==========================================
-# Problem: We have RA/Dec (Earth Coords). We need Galactic Latitude 'b' (Galaxy Coords).
-# Solution: Trigonometric Transformation in Spark SQL.
-# Formula: sin(b) = sin(dec)sin(27.13) + cos(dec)cos(27.13)cos(ra - 192.86)
-# NGP Constants: RA_NGP = 192.85948, Dec_NGP = 27.12825
+```
+```{python}
 
-print("\n>>> Executing Query 2.1: Galactic Plane Motion (Coordinate Transform)...")
+# 2. Register as a Temp View 
+# This allows us to use SQL commands on the dataframe 'df'
+df.createOrReplaceTempView("gaia_source")
 
-# Define Constants for the Transformation
-ra_ngp = radians(F.lit(192.85948))
-dec_ngp = radians(F.lit(27.12825))
+print(">>> Executing Query 2.1: Galactic Plane vs Halo...")
 
-# 1. Complex Math Projection (The "Complexity" Checkmark)
-df_galactic = df.withColumn("ra_rad", radians(col("ra"))) \
-    .withColumn("dec_rad", radians(col("dec"))) \
-    .withColumn("sin_b", 
-                (sin(col("dec_rad")) * sin(dec_ngp)) + 
-                (cos(col("dec_rad")) * cos(dec_ngp) * cos(col("ra_rad") - ra_ngp))
-    ).withColumn("gal_lat_b", degrees(asin(col("sin_b")))) # Convert back to degrees
+# 3. The Spark SQL Query
+# We use a CTE (Common Table Expression) named 'CalculatedData' to do the math first,
+# and then the main query does the aggregation. 
+query = """
+    WITH CalculatedData AS (
+        SELECT 
+            source_id,
+            -- Calculate Total Motion (Hypotenuse of pmra and pmdec)
+            SQRT(POW(pmra, 2) + POW(pmdec, 2)) AS total_motion,
+            
+            -- Define Region using the 'DEC Proxy' method
+            CASE 
+                WHEN ABS(dec) < 15 THEN 'Galactic Plane' 
+                ELSE 'Galactic Halo' 
+            END AS region
+        FROM gaia_source
+    )
+    
+    -- Final Aggregation
+    SELECT 
+        region,
+        ROUND(AVG(total_motion), 2) AS avg_speed,
+        ROUND(STDDEV(total_motion), 2) AS stddev_speed,
+        COUNT(*) AS star_count
+    FROM CalculatedData
+    GROUP BY region
+    ORDER BY avg_speed DESC
+"""
 
-# 2. Binning based on TRUE Galactic Latitude
-# Plane = within +/- 15 degrees of the equator (b=0)
-df_regions = df_galactic.withColumn(
-    "region",
-    when(abs(col("gal_lat_b")) < 15, "Galactic Plane")
-    .otherwise("Galactic Halo/High-Lat")
-).withColumn("total_motion", sqrt(pow(col("pmra"), 2) + pow(col("pmdec"), 2)))
+# 4. Run the query
+sql_results = spark.sql(query)
 
-# 3. Aggregation
-comparison_df = df_regions.groupBy("region").agg(
-    avg("total_motion").alias("avg_speed"),
-    stddev("total_motion").alias("stddev_speed"),
-    count("*").alias("star_count")
+# 5. Show results
+sql_results.show()
+
+```
+## Query 2.1 Analysis 
+
+### Objective & Methodology
+
+The objective of this query was to identify stellar kinematics by comparing the proper motion of stars in the dense Galactic Disk and Galactic Halo. 
+
+ - **Metric**: We calculated the "Total Proper Motion" ($\mu$) for each star by combining its two components: $\mu = \sqrt{\texttt{pmra}^2 + \texttt{pmdec}^2}$.
+ - **Segmentation**: Due to dataset constraints, we utilized Declination (dec) as a proxy for Galactic Latitude. We defined the "Galactic Plane" as the equatorial band ($|dec| < 15^{\circ}$) and the "Halo" as the high-latitude regions ($|dec| \ge 15^{\circ}$).
+
+**Finding A**: The Problem "Missed Galaxy"(Star Count) 
+
+- the simple Reason is that the Milky Way is **tilted**. 
+- Our query only sees the  flat strip across the middle (_dec_ between -15 and 15 degrees).Because of that our "Flat strip" missed the biggest  parts of the galaxy.
+
+**Finding B**: The Velocity Variation
+
+- We Expected the "Halo" to have a higher velocity than the "Plane".Instead  the "Disk" have the biggest range (8.96 vs 7.73).
+
+**The simple reason is the distance changes how speed looks.**
+
+- **The Disk**: Contains many stars that are close to Earth. Because they are close, their speeds look dramatic and varied to our camera.
+
+- **The Halo**: Stars are incredibly far away. Even if they are moving fast, their distance makes them all appear to move slowly and steadily, leading to a "lower" measurement.
+
+## Visualization
+
+```{python}
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+# 1. Take a random 1% sample (Crucial for performance)
+pdf_subset = df.select("ra", "dec").sample(fraction=0.01, seed=42).toPandas()
+
+# 2. Re-create the Region logic (using numpy to avoid errors)
+pdf_subset['Region'] = pdf_subset['dec'].apply(lambda x: 'Galactic Plane' if np.abs(x) < 15 else 'Galactic Halo')
+
+# 3. SET THE THEME: Dark Background for a "Space" look
+plt.style.use('dark_background')
+plt.figure(figsize=(12, 7))
+
+# 4. Plot the "Halo" (Background Stars)
+# We plot these first in cool blue so they look "distant"
+sns.scatterplot(
+    data=pdf_subset[pdf_subset['Region'] == 'Galactic Halo'], 
+    x='ra', 
+    y='dec', 
+    color='cornflowerblue', 
+    s=5,           # Small dots
+    alpha=0.3,     # Faint transparency
+    edgecolor=None,
+    label='Galactic Halo (Sparse)'
 )
 
-comparison_df.show()
+# 5. Plot the "Plane" (The Disk)
+# We plot these on top in bright Gold to represent the dense star field
+sns.scatterplot(
+    data=pdf_subset[pdf_subset['Region'] == 'Galactic Plane'], 
+    x='ra', 
+    y='dec', 
+    color='#FFD700', # Gold color
+    s=10,            # Slightly larger dots
+    alpha=0.4,       # Brighter
+    edgecolor=None,
+    label='Galactic Plane (Dense)'
+)
 
-# Visualization 2.1
-pdf_comp = comparison_df.toPandas()
-plt.figure(figsize=(8, 6))
-sns.barplot(data=pdf_comp, x="region", y="avg_speed", palette="magma", capsize=.1)
-plt.title("Query 2.1: Stellar Velocity Dispersion (Plane vs. Halo)")
-plt.ylabel("Average Proper Motion (mas/yr)")
+# Draw the cut-off lines
+plt.axhline(15, color='white', linestyle='--', linewidth=1, alpha=0.5)
+plt.axhline(-15, color='white', linestyle='--', linewidth=1, alpha=0.5)
+
+# Add text labels on the graph
+plt.text(180, 0, "Milky Way Disk\n(High Density)", color='orangered', 
+         ha='center', va='center', fontsize=12, )
+
+plt.text(180, 60, "Galactic Halo\n(Low Density)", color='cornflowerblue', 
+         ha='center', va='center', fontsize=10)
+
+# 7. Final Polish
+plt.title("Spatial Structure: The 'Flat' Disk vs. The 'Round' Halo", fontsize=14, color='white')
+plt.xlabel("Right Ascension (Longitude)", fontsize=12)
+plt.ylabel("Declination (Latitude)", fontsize=12)
+plt.legend(loc='upper right', facecolor='black', edgecolor='white')
+plt.grid(False) # Turn off grid to look more like space
+
+# Astronomers view the sky looking "up", so we invert the X-axis
+plt.gca().invert_xaxis()
+
 plt.show()
 ```
 
 
 
+
+
+# Query 2.2  Star Density Sky Map
+
 ```{python}
-# ==========================================
-# 🗺️ QUERY 2.2: Star Density Sky Map
-# ==========================================
-print("\n>>> Executing Query 2.2: Sky Density Map...")
+print(">>> Executing Query 2.2: Star Density Sky Map")
 
-# 1. 2D Spatial Binning (1x1 Degree resolution for high detail)
-# 2. Window Function: Rank regions to find the "Dense Core"
-density_df = df.withColumn("ra_bin", floor(col("ra") / 2) * 2) \
-               .withColumn("dec_bin", floor(col("dec") / 2) * 2) \
-               .groupBy("ra_bin", "dec_bin") \
-               .count() \
-               .withColumn("rank", rank().over(Window.orderBy(col("count").desc())))
+query_density = """
+    WITH DensityBins AS (
+        SELECT 
+            -- 1. Spatial Binning (The 'Grid')
+            -- We divide by 2, floor it to remove decimals, then multiply by 2
+            -- This snaps every star to the nearest even number grid line (0, 2, 4...)
+            FLOOR(ra / 2) * 2 AS ra_bin,
+            FLOOR(dec / 2) * 2 AS dec_bin,
+            
+            -- 2. Aggregation (Counting stars in that grid square)
+            COUNT(*) AS star_count
+        FROM gaia_source
+        GROUP BY 1, 2  -- Group by the first two columns (ra_bin, dec_bin)
+    ),
+    
+    RankedRegions AS (
+        SELECT 
+            *,
+            -- Rank the bins from most populated (1) to least populated
+            RANK() OVER (ORDER BY star_count DESC) as density_rank
+        FROM DensityBins
+    )
+    
+    -- 4. Final Result: Top 5 Densest Regions
+    SELECT * FROM RankedRegions 
+    WHERE density_rank <= 5
+"""
 
-# Show top 5 densest regions (Likely the Galactic Center)
-print("Top 5 Densest Sky Regions:")
-density_df.filter(col("rank") <= 5).show()
+# 3. Run and Show
+sql_density_results = spark.sql(query_density)
+sql_density_results.show()
+```
 
-# Visualization 2.2 (The Heatmap)
-pdf_density = density_df.toPandas()
-# Pivot for Heatmap: X=RA, Y=Dec, Z=Count
-heatmap_matrix = pdf_density.pivot(index="dec_bin", columns="ra_bin", values="count").fillna(0)
-heatmap_matrix.sort_index(ascending=False, inplace=True)
+## Query 2.2 Analysis
 
-plt.figure(figsize=(12, 6))
-sns.heatmap(heatmap_matrix, cmap="inferno", vmax=np.percentile(pdf_density['count'], 99)) # Clip outliers
-plt.title("Query 2.2: The Shape of the Milky Way (Star Density)")
-plt.xlabel("Right Ascension (deg)")
-plt.ylabel("Declination (deg)")
+### Objectives and Methodologies
+
+The goal of this query was to create the "Stellar Density Map" to identify the most populated region in the sky. 
+
+- **Spatial Binning Strategy**: We have utilized a qantization approach to divide the continuous sky into discrete grid. `FLOOR(coordinate / 2) * 2` to both Right Ascension (`ra`) and Declination (`dec`), we grouped stars into $2^{\circ} \times 2^{\circ}$ spatial bins.
+- **Analytical Complexity**: To Rank this density, we have incorporated the **pyspark Window Function** (`RANK() OVER (ORDER BY star_count DESC)`).
+
+**Critical Analysis**: 
+
+1. The results has the perfect validation of the binning algorithm and identified **Galactic centre**.
+2. Astronomical Validation: The coordinates returned ($RA \approx 270^{\circ}$, $Dec \approx -30^{\circ}$) correspond precisely to the constellation Sagittarius.
+  - The official coordinates of Sagittarius A* (the supermassive black hole at the center of the Milky Way)re $RA \approx 266^{\circ}$, $Dec \approx -29^{\circ}$.
+
+**Interpretation**:
+
+The high star count in these bins conform that confirm that we are looking through the galactic plate and the centre  bulge. 
+
+## Visualization 
+
+```{python}
+import seaborn as sns
+import matplotlib.pyplot as plt
+import pandas as pd
+from pyspark.sql.functions import col
+
+# 1. Reuse the "DensityBins" logic from Query 2.2, but save it as a real Dataframe
+density_bins = spark.sql("""
+    SELECT 
+        FLOOR(ra / 2) * 2 AS ra_bin, 
+        FLOOR(dec / 2) * 2 AS dec_bin,
+        COUNT(*) as local_density
+    FROM gaia_source 
+    GROUP BY 1, 2
+""")
+
+# We give every star a new property: "How many neighbors do I have?"
+# We calculate the bins on the fly for the join
+df_with_density = df.withColumn("ra_bin", floor(col("ra") / 2) * 2) \
+                    .withColumn("dec_bin", floor(col("dec") / 2) * 2) \
+                    .join(density_bins, ["ra_bin", "dec_bin"])
+
+# This is enough to look like "every star" to the human eye without crashing.
+pdf_visual = df_with_density.sample(fraction=0.05, seed=42).select("ra", "dec", "local_density").toPandas()
+
+# 4. The "Glowing" Scatter Plot
+plt.style.use('default')
+plt.figure(figsize=(14, 8))
+
+# We sort by density so the bright stars are plotted ON TOP of the dark ones
+pdf_visual = pdf_visual.sort_values("local_density")
+
+scatter = plt.scatter(
+    pdf_visual['ra'], 
+    pdf_visual['dec'], 
+    c=pdf_visual['local_density'], # Color by density
+    cmap='magma',                # Magma/Inferno = glowing fire effect
+    s=2,                           # Tiny dots 
+    alpha=0.8,                     # High opacity to make them pop
+    edgecolors='none'              # No borders
+)
+
+# 5. Add a Color Bar (Legend)
+cbar = plt.colorbar(scatter)
+cbar.set_label('Stellar Density (Stars per bin)', rotation=270, labelpad=20, color='Black')
+cbar.ax.yaxis.set_tick_params(color='Black')
+plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='Black')
+
+# 6. Styling
+plt.title("The Milky Way: Stellar Density Visualization", fontsize=18, color='Black' )
+plt.xlabel("Right Ascension", fontsize=12, color='Black')
+plt.ylabel("Declination", fontsize=12, color='Black')
+plt.gca().invert_xaxis() # Astronomical standard
+plt.grid(False)
+
 plt.show()
 ```
 
+# Query 2.3 Parallax Error vs Brightness
+
+
+
 ```{python}
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, radians, degrees, floor, count, avg, stddev, sqrt, pow, abs, sin, cos, asin, when, lit
+
+print(">>> Executing Query 2.3: Parallax Error vs. Brightness...")
+
+query_quality = """
+    WITH QualityMetrics AS (
+        SELECT 
+            -- 1. Create Brightness Bins (0-21)
+            -- FLOOR groups '10.2' and '10.9' into bin '10'
+            FLOOR(phot_g_mean_mag) AS mag_bin,
+            
+            -- Pass through the raw data we need
+            parallax_error,
+            parallax
+        FROM gaia_source
+        WHERE parallax > 0  -- Filter out bad data to avoid division by zero
+    )
+    
+    -- 2. Aggregation to find the Error Trend
+    SELECT 
+        mag_bin AS magnitude,
+        
+        -- A. Count how many stars are in this brightness range
+        COUNT(*) AS star_count,
+        
+        -- B. Average Absolute Error (Raw uncertainty)
+        ROUND(AVG(parallax_error), 4) AS avg_raw_error,
+        
+        -- C. Average Relative Error (The "Percentage" uncertainty)
+        -- Formula: Error / Total Signal
+        ROUND(AVG(parallax_error / parallax), 4) AS avg_relative_error
+        
+    FROM QualityMetrics
+    WHERE mag_bin > 0 AND mag_bin < 22 -- Focus on the valid main range
+    GROUP BY mag_bin
+    ORDER BY mag_bin ASC -- Sort from Bright -> Dim
+"""
+
+# 3. Run and Show
+quality_results = spark.sql(query_quality)
+quality_results.show(25) # Show 25 rows to see the full range
+
+```
+
+## Query 2.3 Analysis
+
+### Objectives and Methodologies
+
+
+The objective of this query was to evaluate the steller technique's depandibity at various star  magnitudes. Before entering to the machine learning part, it is essetional to indentify the "Signal-to-Noice" ratios. 
+
+- Binning Strategy: We grouped stars by their Apparent Magnitude (`phot_g_mean_mag`) into integer bins (e.g., Magnitude 10, 11, 12...).
+- For each bin we have clacualted: 
+   - **Average Absolute Error** _`AVG(parallax_error)`_ 
+   - **Average Relative Error** _`AVG(parallax_error / parallax)`_
+- Statistics: 
+    - **Bright stars** - (Mag < 13 ) High photon counts result in high-precision centroids, leading to low parallax error.
+    - **Dim stars** - (Mag > 13 )Lower signal-to-noise ratios should result in exponentially increasing errors. 
+
+
+## Visualization 
+
+```{python}
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-import numpy as np
-from matplotlib.colors import LogNorm
 
-# Setup Dark Mode for that "Sci-Fi" look
-plt.style.use('dark_background')
-sns.set_context("notebook", font_scale=1.2)
+# 1. Convert Spark Result to Pandas
+pdf_quality = quality_results.toPandas()
 
-# Initialize Spark
-spark = SparkSession.builder \
-    .appName("Member2_Visuals_Pro") \
-    .config("spark.driver.memory", "4g") \
-    .getOrCreate()
+# 2. Setup the Plot (Dual Axis)
+# We want to show Star Count (Bars) AND Error Rate (Line) on the same chart
+fig, ax1 = plt.subplots(figsize=(12, 6))
 
-# Load Data
-df = spark.read.parquet("../data/gaia_survey.parquet")
-
-# ==========================================
-# 🌌 VISUAL 2.1: Plane vs. Halo (Boxen Plot)
-# ==========================================
-# Why cooler? A Bar chart hides the data. A Boxen plot shows the spread, 
-# tails, and outliers of the velocity distribution.
-
-print(">>> Generating Visual 2.1 (Velocity Distribution)...")
-
-# 1. Coordinate Transform (Same as before)
-ra_ngp = radians(lit(192.85948))
-dec_ngp = radians(lit(27.12825))
-
-df_galactic = df.withColumn("ra_rad", radians(col("ra"))) \
-    .withColumn("dec_rad", radians(col("dec"))) \
-    .withColumn("sin_b", 
-                (sin(col("dec_rad")) * sin(dec_ngp)) + 
-                (cos(col("dec_rad")) * cos(dec_ngp) * cos(col("ra_rad") - ra_ngp))
-    ).withColumn("gal_lat_b", degrees(asin(col("sin_b")))) \
-    .withColumn("total_motion", sqrt(pow(col("pmra"), 2) + pow(col("pmdec"), 2)))
-
-# 2. Define Regions
-df_regions = df_galactic.withColumn(
-    "Region",
-    when(abs(col("gal_lat_b")) < 15, "Galactic Plane (Disk)")
-    .otherwise("Galactic Halo (Sphere)")
+# 3. Plot A: Star Count (The Histogram) on Left Axis
+# This shows where most of our data lives
+sns.barplot(
+    data=pdf_quality, 
+    x='magnitude', 
+    y='star_count', 
+    color='cornflowerblue', 
+    alpha=0.3, 
+    ax=ax1,
+    label='Star Count'
 )
+ax1.set_ylabel('Number of Stars (Log Scale)', color='blue')
+ax1.tick_params(axis='y', labelcolor='blue')
+ax1.set_yscale('log') # Log scale because star counts vary wildly (1 to 300,000)
 
-# 3. Collect Sample (Boxen plots crash with 2M rows, so we sample 5%)
-pdf_21 = df_regions.select("Region", "total_motion").sample(0.05).toPandas()
+# 4. Plot B: The Parallax Error (AVG Error) on Right Axis
+ax2 = ax1.twinx()
 
-# Plotting
-plt.figure(figsize=(10, 6))
-# Boxenplots handle large datasets better than violins
-sns.boxenplot(data=pdf_21, x="Region", y="total_motion", palette="twilight", showfliers=False)
-plt.title("Query 2.1: Stellar Velocity Dispersion (Kinematics)", color="cyan", fontsize=16)
-plt.ylabel("Proper Motion Speed (mas/yr)")
-plt.xlabel("")
-plt.grid(axis='y', linestyle='--', alpha=0.3)
-plt.tight_layout()
-plt.show()
-
-
-# ==========================================
-# 🗺️ VISUAL 2.2: The All-Sky Map (Mollweide)
-# ==========================================
-# Why cooler? It's a map of the entire sky, projected correctly. 
-# We use a Log Norm because the core is 1000x denser than the halo.
-
-# ==========================================
-# 🗺️ VISUAL 2.2: The All-Sky Map (Mollweide) - High Res Fix
-# ==========================================
-
-print(">>> Generating Visual 2.2 (Mollweide Sky Map)...")
-
-# 1. Binning in Spark - INCREASED RESOLUTION
-# Changed factor from 10 to 60. This gives us ~1 degree resolution (closer to 60x30 grid per radian)
-# This is the difference between Minecraft and 1080p.
-bins_hex = df.withColumn("ra_rad", radians(col("ra") - 180)) \
-             .withColumn("dec_rad", radians(col("dec"))) \
-             .withColumn("ra_bin", floor(col("ra_rad") * 60) / 60) \
-             .withColumn("dec_bin", floor(col("dec_rad") * 60) / 60) \
-             .groupBy("ra_bin", "dec_bin") \
-             .agg(count("*").alias("stars"))
-
-pdf_22 = bins_hex.toPandas()
-
-# Plotting
-plt.figure(figsize=(15, 8)) # Made slightly larger for your 4GB GPU to render nicely
-ax = plt.subplot(111, projection="mollweide")
-
-# Create the heatmap
-# Optimization: Smaller markers (s=2) and no edgecolors create a "blended" gas-cloud effect
-sc = ax.scatter(
-    pdf_22['ra_bin'], 
-    pdf_22['dec_bin'], 
-    c=pdf_22['stars'], 
-    cmap='inferno', 
-    s=2,              # <--- drastically reduced from 15 to prevent blockiness
-    alpha=0.7,        # <--- slightly lower alpha allows layering
-    norm=LogNorm(), 
-    marker='h',       # <--- 'h' (hexagon) packs tighter than 's' (square) naturally
-    edgecolors='none'
+sns.lineplot(
+    data=pdf_quality, 
+    x=ax1.get_xticks(), # Align line with bars
+    y='avg_raw_error',  # AVG(parallax_error)
+    color='red', 
+    marker='o', 
+    linewidth=2,
+    ax=ax2,
+    label='Avg Parallax Error (mas)'
 )
+ax2.set_ylabel('Avg Parallax Error (milliarcseconds)', color='red')
+ax2.tick_params(axis='y', labelcolor='red')
 
-ax.grid(True, linestyle='--', alpha=0.3, color='gray')
-ax.set_title("Query 2.2: The Milky Way (All-Sky Density Map)", color="orange", fontsize=16, pad=20)
-
-# Clean up the background for the "Space" feel
-ax.set_facecolor('black')
-plt.colorbar(sc, label="Star Density (Log Scale)", orientation='horizontal', shrink=0.6, pad=0.05)
-plt.tight_layout()
-plt.show()
-
-
-# ==========================================
-# 📉 VISUAL 2.3: Error Rates (Glowing Line)
-# ==========================================
-print(">>> Generating Visual 2.3 (Data Quality Dashboard)...")
-
-# 1. Aggregate in Spark
-df_qual = df.filter(col("phot_g_mean_mag").isNotNull()) \
-    .withColumn("mag_bin", floor(col("phot_g_mean_mag"))) \
-    .groupBy("mag_bin") \
-    .agg(
-        avg("parallax_error").alias("avg_err"),
-        stddev("parallax_error").alias("std_err")
-    ) \
-    .orderBy("mag_bin")
-
-pdf_23 = df_qual.toPandas()
-
-# Plotting
-fig, ax = plt.subplots(figsize=(10, 6))
-
-# Main Line (Neon Red)
-ax.plot(pdf_23['mag_bin'], pdf_23['avg_err'], color='#ff0055', linewidth=3, label='Mean Parallax Error')
-
-# Glow Effect (Shadow lines)
-for w in [5, 7, 9]:
-    ax.plot(pdf_23['mag_bin'], pdf_23['avg_err'], color='#ff0055', linewidth=w, alpha=0.1)
-
-# Error Band (Standard Deviation)
-ax.fill_between(
-    pdf_23['mag_bin'], 
-    pdf_23['avg_err'] - pdf_23['std_err'], 
-    pdf_23['avg_err'] + pdf_23['std_err'], 
-    color='#ff0055', alpha=0.15
-)
-
-ax.set_title("Query 2.3: Measurement Uncertainty Profile", color="white", fontsize=16)
-ax.set_xlabel("Apparent Magnitude (Dimmer ->)", fontsize=12)
-ax.set_ylabel("Parallax Error (mas)", fontsize=12)
-ax.grid(True, linestyle=':', alpha=0.3)
-ax.legend(loc='upper left', facecolor='black', edgecolor='white')
-
-# Annotation for the "Danger Zone"
-ax.axvspan(17, 21, color='gray', alpha=0.2, hatch='///')
-ax.text(18, pdf_23['avg_err'].max()*0.8, "High Noise Zone\n(Filtered out for Task 3)", 
-        color="white", ha='center', fontsize=10, bbox=dict(facecolor='black', alpha=0.8))
+# 5. Titles and Layout
+plt.title("Data Quality Audit (Error Rate vs. Brightness)", fontsize=14)
+ax1.set_xlabel("Apparent Magnitude (Lower = Brighter)", fontsize=12)
+plt.grid(True, linestyle=':', alpha=0.5)
 
 plt.tight_layout()
 plt.show()
-
-spark.stop()
 ```
+
+
+
+
+
 
