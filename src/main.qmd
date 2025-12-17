@@ -255,7 +255,7 @@ The analysis was performed using a single, efficient query that focused purely o
 - **Sanitisation**
   The `WHERE` clause performed filtering to remove all low-quality and non-physical measurements:
   * Exclusion of stars with invalid distance (`parallax > 0`).
-  * Exclusion of stars missing essential photometry (`bp_rp IS NOT NULL` and `phot\_g\_mean\_mag IS NOT NULL`).
+  * Exclusion of stars missing essential photometry (`bp_rp IS NOT NULL` and `phot_g_mean_mag IS NOT NULL`).
   * Exclusion of all data points failing the **SNR $\geq 5.0$** standard.
 
 - **Data Transfer**
