@@ -221,14 +221,14 @@ df_local.select([count(when(col(c).isNull(), c)).alias(c) for c in cols_to_check
 ## Jasmi
 
 ### The H-R Diagram
-To prepare a high-quality, filtered dataset by calculating the intrinsic luminosity (Absolute Magnitude, $M_G$) for every star in the survey, providing the necessary data for the H-R Diagram's Y-axis.
+To prepare a high-quality, filtered dataset by calculating the luminosity (Absolute Magnitude, $M_G$) for every star in the survey, providing the necessary data for the H-R Diagram's Y-axis.
 
 #### Methodology
-This phase uses a **Direct Calculation and Strict Quality Filtering** approach in Spark SQL. The complexity lies not in aggregation, but in applying the critical astronomical transformation formula and enforcing a high Signal-to-Noise Ratio (SNR) on the distance data before transferring the results to Python for advanced plotting.
+This phase uses a **Direct Calculation and Quality Filtering** approach in Spark SQL. The complexity lies not in aggregation, but in applying the astronomical transformation formula and enforcing a high Signal-to-Noise Ratio (SNR) on the distance data before transferring the results to Python for advanced plotting.
 
 #### Parameter Justification
 
-To ensure the resulting H-R Diagram is scientifically precise—preventing the smearing of the Main Sequence—strict parameters were justified and applied:
+To ensure the resulting H-R Diagram is scientifically precise—preventing the smearing of the Main Sequence, the parameters were justified and applied:
 
 - **Absolute Magnitude ($M_G$) Calculation**
   The luminosity is calculated using the standard formula :
@@ -243,7 +243,7 @@ To ensure the resulting H-R Diagram is scientifically precise—preventing the s
   This direct photometric measurement provides the most reliable measure of the star's effective surface temperature (the X-axis of the H-R Diagram). It is directly selected for the plot without modification.
 
 - **Quality Cut (Parallax / Parallax Error $\geq 5.0$)**
-  The signal-to-noise ratio (SNR) of the parallax is calculated dynamically and filtered to values greater than 5.0. This **Critical SNR Cut** is the most important filter: it ensures that only stars with highly reliable distance estimates are processed. Stars with poor parallax data would otherwise cause the Main Sequence to appear thick and indistinct, masking key stellar populations.
+  The signal-to-noise ratio (SNR) of the parallax is calculated dynamically and filtered to values greater than 5.0. This **Critical SNR Cut** is the most important filter as it ensures that only stars with highly reliable distance estimates are processed. Stars with poor parallax data would otherwise cause the Main Sequence to appear thick and indistinct, masking key stellar populations.
 
 #### The Query Logic
 
@@ -253,7 +253,7 @@ The analysis was performed using a single, efficient query that focused purely o
   The Absolute Magnitude ($\text{abs\_mag}$) was calculated directly in the `SELECT` clause using the $\log_{10}$ function applied to the parallax.
 
 - **Sanitisation**
-  The `WHERE` clause performed strict filtering to remove all low-quality and non-physical measurements:
+  The `WHERE` clause performed filtering to remove all low-quality and non-physical measurements:
   * Exclusion of stars with invalid distance (`parallax > 0`).
   * Exclusion of stars missing essential photometry (`bp_rp IS NOT NULL` and `phot\_g\_mean\_mag IS NOT NULL`).
   * Exclusion of all data points failing the **SNR $\geq 5.0$** standard.
@@ -319,7 +319,7 @@ pdf.head()
 
 #### Visualisation Logic
 
-The final visualization step—performed in Python using the data prepared by this query—is a significant improvement over simple heatmapping:
+The final visualization step performed in Python using the data prepared by this query has:
 
 - **Advanced Density Scatter:** Instead of using fixed SQL bins, the data is plotted using a density-mapped scatter plot.
 - **NumPy Density Trick:** NumPy's `histogram2d` function is used to assign a **density score** to every individual point.
@@ -392,24 +392,17 @@ This query uses a Colour–Magnitude approach rather than relying on raw tempera
 
 #### Parameter Justification
 
-To ensure scientific accuracy and robustness in the classification process, the following parameters were selected:
+To ensure scientific accuracy in the classification process, the following parameters were selected:
 
 - **Colour Index (`bp_rp`)**  
-  The colour index is calculated as the difference between the Blue (`bp`) and Red (`rp`) photometric bands. This metric is used instead of the algorithmically derived effective temperature (`teff_gspphot`). Temperature estimates tend to degrade for faint stars, often producing artificially high temperature values. In contrast, the colour index is a direct photometric measurement and provides a more reliable separation of stellar spectral types.
-
+  
 - **Quality Cut (Parallax / Parallax Error > 5)**  
-  The signal-to-noise ratio of the parallax is calculated dynamically and filtered to values greater than 5. This ensures that only stars with reliable distance measurements are included in the analysis. Applying this threshold reduces distance-related uncertainties and prevents the misclassification of dwarfs as giants due to parallax errors, commonly referred to as “ghost giants”.
 
 - **Absolute Magnitude ($M_G$)**  
-  The intrinsic brightness of each star is calculated using the formula:  
-  \[
-  M_G = m - 5 \log_{10}(d) + 5
-  \]  
-  where \( m \) is the apparent magnitude and \( d \) is the distance in parsecs. Absolute magnitude allows for a clear distinction between stellar evolutionary stages. Red giants are identified as intrinsically bright stars (\( M_G < 3.5 \)), while red dwarfs are significantly dimmer (\( M_G > 3.5 \)). This separation cannot be achieved using apparent magnitude alone.
 
 ```{python}
 
-# 1. The Corrected Query (Calculates error ratio on the fly)
+# 1. Query
 query = """
 WITH PhysicalProperties AS (
     SELECT
