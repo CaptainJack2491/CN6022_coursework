@@ -5,18 +5,30 @@ author:
   - Jayrup Nakawala (u2613621)
   - Yogi Patel (u2536809)
   - Jasmi Alasapuri (u2571395)
-toc: true
 number-sections: true
+number-depth: 3
 format: 
   html: 
     code-fold: true
     embed-resources: true
     toc: true
+    toc-location: left
+    other-links:
+      - text: Gaia Data Release 3
+        href: https://www.cosmos.esa.int/web/gaia/data-release-3
+      - text: GDR3 Data Model
+        href: https://gea.esac.esa.int/archive/documentation/GEDR3/Gaia_archive/chap_datamodel/sec_dm_main_tables/ssec_dm_gaia_source.html
+    code-links:
+      - text: GitHub
+        icon: github
+        href: https://github.com/CaptainJack2491/CN6022_coursework
 jupyter: python3
 execute: 
   cache: true
 bibliography: references.bib
-fig-align: center
+fig-cap-align: center
+code-line-numbers: true
+lightbox: true
 ---
 
 # Introduction
@@ -54,6 +66,10 @@ The following columns from the Gaia dataset will be used in our analysis:
 *   **`phot_g_mean_mag`**: Mean apparent magnitude in the G-band (a measure of brightness as seen from Earth). (Single Precision)
 *   **`bp_rp`**: The blue-red color index, a proxy for the star's surface temperature. (Single Precision)
 *   **`teff_gspphot`**: Effective temperature of the star's photosphere, derived from photometry. (Single Precision)
+
+::: {.column-margin}
+![Stellar definitions](stellar_defination.png)
+:::
 
 ## Team Structure and Objectives
 
@@ -1256,7 +1272,7 @@ This is the **white dwarf cooling sequence** the evolutionary path of dead stars
    - The **smooth curve** confirms white dwarfs cool predictably—like cosmic thermometers  
 
 4. **The "Bifurcation"**
-   - **The population is segregated** : If you look closely at the diagonal band, it isn't a single smear; it's split into two distinct, parallel "ridges" or tracks. White Dwarfs are not a homogeneous group. This split typically represents a difference in atmospheric composition.
+   - **The population is segregated** : If we look closely at the diagonal band, it isn't a single smear; it's split into two distinct, parallel "ridges" or tracks. White Dwarfs are not a homogeneous group. This split typically represents a difference in atmospheric composition.
       - **Track A** (Top/Blue ridge): Likely stars with Hydrogen-rich atmospheres (DA white dwarfs). Hydrogen is lighter and more opaque, acting as a blanket that keeps heat in differently than Helium.
       - **Track B** (Bottom/Red ridge): Likely stars with Helium-rich atmospheres (DB white dwarfs).
 
@@ -1265,12 +1281,7 @@ This is the **white dwarf cooling sequence** the evolutionary path of dead stars
 
 
 ### Red Giant Candidates
-* **Goal:** To find Red Giants, which are old, dying stars. They are **very cool** but **very bright**.
-* **Columns Needed:** `teff_gspphot`, `parallax`, `phot_g_mean_mag`
-* **SQL Complexity:** This is identical in structure to Query 3.1, but with inverted filters. This shows you understand *how* to apply domain knowledge.
-    1.  **Subquery or CTE:** Same as 3.1, create a view with `absolute_magnitude`.
-    2.  **Complex Filtering:** Select from this temporary table `WHERE teff_gspphot < 4500` (cooler than 4,500 K) AND `absolute_magnitude < 1` (brighter than 1).
-* **Visualization:** A **Scatter Plot** of `teff_gspphot` vs. `absolute_magnitude` for these candidates. [cite_start]They will form the "giant branch" at the top right of the H-R diagram[cite: 85].
+Red Giants are old, dying stars. They are **very cool** but **very bright**, hence they are on the **top-right** of the HR-diagram.
 
 
 ```{python}
@@ -1437,17 +1448,9 @@ This is the **Red Giant Branch (RGB)**, the evolutionary path of aging, low- to 
    - The RGB is a **stellar aging sequence**: its shape and density reveal the star formation history of our galactic neighborhood.  
    - Because red giants are bright, they’re visible across vast distances—making them key tracers of galactic structure.
 
-> In short: this plot shows **stars in their golden (actually red!) retirement**, glowing brightly as they near the end of their lives—before shedding their outer layers to become white dwarfs.
+> TLDR: this plot shows stars in their retirement, glowing brightly as they near the end of their lives—before shedding their outer layers to become white dwarfs.
 
 ### Co-Moving Pair Search (Binary Candidates)
-* **Goal:** To find pairs of stars that are "traveling together" through space—they have similar distances and similar proper motions. This implies they are a binary star system.
-* **Columns Needed:** `source_id`, `ra`, `dec`, `parallax`, `pmra`, `pmdec`
-* **SQL Complexity:** This is the most complex query of all, as it requires a **self-join**:
-    1.  **Self-Join:** `FROM gaia_df A JOIN gaia_df B ON A.source_id < B.source_id` (the `<` prevents joining a star with itself and getting duplicate pairs).
-    2.  **Spatial Binning (Join Optimization):** To avoid an $N \times N$ comparison, you *must* first bin the stars by position and join *only on the same bin*: `...ON A.ra_bin = B.ra_bin AND A.dec_bin = B.dec_bin AND A.source_id < B.source_id`.
-    3.  **Complex Filtering:** `WHERE ABS(A.parallax - B.parallax) < 1` (similar distance) AND `ABS(A.pmra - B.pmra) < 5` (similar motion) AND `ABS(A.pmdec - B.pmdec) < 5` (similar motion).
-* [cite_start]**Visualization:** A **Table** listing the pairs (`A.source_id`, `B.source_id`)[cite: 85].
-
 
 Binary stars are gravitationally bound systems sharing common motion through space. We can detect them by finding pairs with:
 
@@ -1593,4 +1596,926 @@ plt.grid(alpha=0.3)
 plt.tight_layout()
 plt.show()
 ```
+:::
+
+```{python}
+spark.stop()
+```
+
+# ML-Models
+In this section, we will look at the machine learning models that we have trained and evaluated on the Gaia Dataset.
+
+## Jasmi
+## Yogi (Staller Populations in Gaia DR3)
+
+Using the `gaia_survey` dataset, the task shifts from getting data to implementing predictions. The objective is to construct, train, and evaluate classification models that can automatically categorize stellar objects based on their physical properties.
+
+### Purpose and Need for Implementation
+
+- Differentiation of Stellar Objects: The main goal is to use observations to differentiate "nearby dwarfs from distant giants" and other star populations.
+- Managing High-Dimensional Data: To make sure the data is appropriate for algorithmic division, the task applies modifications such log-scaling to meet the "massive range" of astronomical quantities (like parallax).
+- Automation: When working with large-scale survey data that cannot be manually classified, the task automates the complicated procedure of feature collection, scaling, and classification by using a pipeline.
+
+### Model Insights
+
+What it is about: A supervised classification workflow is implemented in this problem. After creating training labels using "ground truth" logic based on astronomy (Absolute Magnitude vs. Colour), it trains algorithms to predict such labels using only observable features.
+
+The Workflow:
+
+1. Feature Engineering: It constructs input features from raw data, such as calculating total_motion from proper motion vectors ($pmra$ and $pmdec$)
+
+2. Label Generation: It creates a label column by applying specific physical cuts:
+  - White Dwarfs (Label 2.0): Defined as having Absolute Magnitude ($M_G$) $> 10$
+  - Red Giants (Label 1.0): Defined as having $M_G < 3$ and Color ($bp\_rp$) $> 1.0$
+  - Main Sequence (Label 0.0): Everything else
+
+3. Algorithm Implementation: It implements two distinct algorithms to solve this problem:
+  - Random Forest Classifier: A non-linear model suited for complex decision boundaries.
+  - Logistic Regression: A linear model used for comparison, which includes feature scaling and elasticity regularization.
+
+4. What it is trying to predict: The models aim to predict the label (Star Type) of a star given only its observable features (bp_rp, phot_g_mean_mag, total_motion, parallax). It validates these predictions using Cross-Validation (3-Fold) to ensure the model is robust and "not just lucky".
+
+
+### Phase 1: The Random Forest Model
+
+#### Data Preparation & Features
+
+```{python} 
+
+import os
+import numpy as np
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.feature import StandardScaler
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
+from pyspark.ml import Pipeline
+from pyspark.ml import PipelineModel
+
+
+
+spark = SparkSession.builder \
+    .appName("StellarPopulation_RF_Advanced") \
+    .config("spark.driver.memory", "4g") \
+    .config("spark.executor.memory", "4g") \
+    .config("spark.memory.offHeap.enabled", "true") \
+    .config("spark.memory.offHeap.size", "1g") \
+    .config("spark.sql.shuffle.partitions", "200") \
+    .getOrCreate()
+
+# 2. Load the Data (Correct spelling)
+df = spark.read.parquet("../data/gaia_survey.parquet")
+
+# A. Calculate Observables (Features)
+# We add 'parallax' because it is an OBSERVABLE. It allows the model to differentiate
+# nearby dwarfs from distant giants.
+df = df.withColumn("total_motion", F.sqrt(F.col("pmra")**2 + F.col("pmdec")**2))
+# Log-transform parallax to handle the massive range (scales data for better splits)
+df = df.withColumn("log_parallax", F.log10(F.abs(F.col("parallax")) + 1e-6))
+
+
+# 3. Clean data
+df = df.dropna(subset=["phot_g_mean_mag", "bp_rp", "parallax", "total_motion"])
+
+# Verify it worked
+print(f"Data loaded and cleaned. Rows: {df.count()}")
+df.printSchema()
+
+```
+#### Handling Class Imbalance
+
+A critical step in this code is addressing the fact that White Dwarfs are rare compared to Main Sequence stars.
+
+- The Problem: Without correction, a model could achieve high accuracy by simply ignoring the rare White Dwarfs.
+- The Solution: The code calculates Class Weights using the formula:$$Weight = \frac{Total Rows}{3.0 \times Class Count}$$This assigns higher weights to rare classes (White Dwarfs) to force the model to pay attention to them during training5.
+
+
+```{python}
+
+# --- A. Create Absolute Magnitude (M_G) for the Label Logic ---
+# Distance d = 1000 / parallax (mas)
+df = df.withColumn("distance", 1000 / F.col("parallax"))
+df = df.withColumn("abs_mag", F.col("phot_g_mean_mag") - 5 * F.log10(F.col("distance")) + 5)
+
+# --- B. Define the Classes (The "Ground Truth" Cuts) ---
+
+df_labeled = df.withColumn("label", 
+    F.when(F.col("abs_mag") > 10, 2.0)  # White Dwarf
+     .when((F.col("abs_mag") < 3) & (F.col("bp_rp") > 1.0), 1.0) # Red Giant
+     .otherwise(0.0) # Main Sequence
+)
+
+# --- C. Handle Class Imbalance (Weighting) ---
+# Calculate class counts
+class_counts = df_labeled.groupBy("label").count().collect()
+total_rows = df_labeled.count()
+count_map = {row['label']: row['count'] for row in class_counts}
+
+# Calculate weights: Weight = Total / (Number of Classes * Class Count)
+# Weight = Total / (Num_Classes * Count)
+class_weights = {k: total_rows / (3.0 * v) for k, v in count_map.items()}
+print(f">> Class Weights: {class_weights}")
+
+# Broadcast weights to a mapping column
+mapping_expr = F.create_map([F.lit(x) for x in sum(class_weights.items(), ())])
+df_weighted = df_labeled.withColumn("classWeight", mapping_expr.getItem(F.col("label")))
+
+print("Class Weights Calculated:", class_weights)
+
+```
+#### Model Configuration & Tuning
+
+```{python}
+
+# Define Input Features (Observables only!)
+feature_cols = ["bp_rp", "phot_g_mean_mag", "total_motion", "parallax", "log_parallax"]
+assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
+
+
+# Initialize Random Forest
+rf = RandomForestClassifier(
+    labelCol="label", 
+    featuresCol="features", 
+    weightCol="classWeight",
+    seed=42,
+    subsamplingRate=0.7, 
+    featureSubsetStrategy="sqrt"
+)
+
+# Build Pipeline
+pipeline = Pipeline(stages=[assembler, rf])
+
+# Parameter Grid for Tuning
+paramGrid = ParamGridBuilder() \
+    .addGrid(rf.numTrees, [30, 50]) \
+    .addGrid(rf.maxDepth, [8, 12]) \
+    .build()
+
+# Evaluator (Focus on Weighted F1 to balance all classes)
+evaluator = MulticlassClassificationEvaluator(
+    labelCol="label", predictionCol="prediction", metricName="f1")
+
+# Cross Validator (3-Fold)
+# It ensures the model is robust and not just lucky.
+cv = CrossValidator(
+    estimator=pipeline,
+    estimatorParamMaps=paramGrid,
+    evaluator=evaluator,
+    numFolds=3,
+    parallelism=2  # Train 2 models in parallel if memory allows
+)
+
+# 5. Train/Test Split
+train_data, test_data = df_weighted.randomSplit([0.8, 0.2], seed=42)
+print(f"Training Count: {train_data.count()} | Test Count: {test_data.count()}")
+
+
+```
+
+
+
+#### Training & Saving
+
+
+```{python}
+
+# Define the path
+model_path = "stellar_classifier_rf_v1"
+
+if not os.path.exists(model_path):
+    print(">> Model not found. Training a new model...")
+    print(">> Starting Cross-Validation Training (This may take 5-10 mins)...")
+    
+    # 1. Train
+    cv_model = cv.fit(train_data)
+    
+    # 2. Extract the Best Model (The winner)
+    best_model = cv_model.bestModel
+    
+    # 3. Save ONLY the Best Model (Lighter and standard practice)
+    best_model.write().overwrite().save(model_path)
+    print(f"Model saved to {model_path}")
+
+else:
+    print(">> Model found. Loading saved model...")
+    
+    # 4. Load as PipelineModel 
+    best_model = PipelineModel.load(model_path)
+    print(">> Model loaded.")
+
+# --- Access the RF Stage for Parameters ---
+# The Random Forest is the last stage in the pipeline (index -1)
+best_rf_model = best_model.stages[-1]
+
+print(f"\n>> Best Model Parameters:")
+print(f"   Num Trees: {best_rf_model.getNumTrees}")
+print(f"   Max Depth: {best_rf_model.getOrDefault('maxDepth')}")
+
+# --- Evaluation ---
+predictions = best_model.transform(test_data)
+
+acc_eval = MulticlassClassificationEvaluator(metricName="accuracy")
+f1_eval = MulticlassClassificationEvaluator(metricName="f1")
+prec_eval = MulticlassClassificationEvaluator(metricName="weightedPrecision")
+
+print("\n=== FINAL MODEL EVALUATION ===")
+print(f"Accuracy: {acc_eval.evaluate(predictions):.2%}")
+print(f"F1 Score: {f1_eval.evaluate(predictions):.2%}")
+print(f"Precision: {prec_eval.evaluate(predictions):.2%}")
+
+```
+
+#### Confusion Matrix
+
+```{python}
+#| label: fig-confusion-matrix
+#| fig-cap: "Normalized Confusion Matrix (%)"
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+
+# 1. Collect Predictions
+print(">> Collecting predictions to driver for visualization...")
+y_true = predictions.select("label").toPandas()
+y_pred = predictions.select("prediction").toPandas()
+
+# 2. Calculate Raw and Normalized Matrices
+cm = confusion_matrix(y_true, y_pred)
+labels = ["Main Seq", "Red Giant", "White Dwarf"]
+
+# Normalize row-wise: Divides count by the total stars in that TRUE class
+cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+
+# 3. Plot the Heatmap
+sns.heatmap(
+    cm_normalized, 
+    annot=True, 
+    fmt='.1%',       
+    cmap='Greens',   
+    xticklabels=labels,
+    yticklabels=labels,
+    cbar_kws={'label': 'Recall (True Positive Rate)'},
+    vmin=0, vmax=1   # Ensures color scale is fixed from 0% to 100%
+)
+
+plt.ylabel('Actual Star Type', fontsize=14)
+plt.xlabel('Predicted Star Type', fontsize=14)
+plt.tight_layout()
+plt.show()
+```
+ 
+#### Feature Importance
+
+```{python}
+
+
+importances = best_rf_model.featureImportances
+print("\n=== Feature Importance ===")
+feat_imp_list = sorted(zip(feature_cols, importances), key=lambda x: x[1], reverse=True)
+for feat, score in feat_imp_list:
+    print(f"{feat}: {score:.4f}")
+
+```
+
+
+#### Visualizing Predictions
+
+```{python}
+#| label: fig-predictions
+#| fig-cap: "Stellar Populations in Gaia DR3"
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+
+# 1. Setup Data 
+plot_data = predictions.select("bp_rp", "abs_mag", "prediction").sample(False, 0.1).toPandas()
+
+# 2. Map Predictions to Names
+label_map = {0.0: "Main Sequence", 1.0: "Red Giant", 2.0: "White Dwarf"}
+plot_data['Star Type'] = plot_data['prediction'].map(label_map)
+
+# 3. Define "Academic" Palette (High Contrast for White Background)
+academic_palette = {
+    
+    "White Dwarf": "#9b59b6",    
+    "Main Sequence": "#1abc9c",  
+    "Red Giant": "#d35400"
+}
+
+# 4. Create Plot with "Seaborn Whitegrid" Style
+plt.style.use('seaborn-v0_8-whitegrid')
+ax = plt.gca()
+
+order = ["Main Sequence", "Red Giant", "White Dwarf"]
+
+for star_type in order:
+    subset = plot_data[plot_data['Star Type'] == star_type]
+    
+    ax.scatter(
+        subset['bp_rp'], 
+        subset['abs_mag'], 
+        c=academic_palette[star_type], 
+        s=5,           
+        alpha=0.4,     
+        edgecolor='none',
+        label=star_type
+    )
+# 6. Professional Aesthetics
+ax.invert_yaxis()  # Standard Astronomy Convention
+ax.set_title("Stellar Populations in Gaia DR3 (Predicted)", fontsize=16, weight='bold', pad=15)
+ax.set_xlabel("Color Index ($G_{BP} - G_{RP}$) [mag]", fontsize=14)
+ax.set_ylabel("Absolute Magnitude ($M_G$) [mag]", fontsize=14)
+
+# Tick Customization 
+ax.tick_params(axis='both', which='major', labelsize=12)
+
+# Legend (Boxed, Top Right, like the paper)
+legend = ax.legend(
+    title='Classification', 
+    fontsize=11, 
+    title_fontsize=12, 
+    loc='upper right', 
+    frameon=True, 
+    fancybox=False, # Square corners like the paper
+    edgecolor='black',
+    framealpha=1
+)
+
+plt.tight_layout()
+plt.show()
+
+
+```
+
+
+
+### Phase 2: Logistic Regression
+
+#### Model setup 
+
+```{python}
+
+# 1. Feature Scaling (Crucial for Logistic Regression)
+# This ensures 'total_motion' (large values) doesn't drown out 'bp_rp' (small values).
+scaler = StandardScaler(
+    inputCol="features", 
+    outputCol="scaled_features",
+    withStd=True, 
+    withMean=True
+)
+
+# 2. Define the Estimator
+# - family="multinomial": Explicitly tells Spark to handle 3 classes.
+# - weightCol="classWeight": Uses the same weights as RF to handle the class imbalance.
+lr = LogisticRegression(
+    labelCol="label", 
+    featuresCol="scaled_features", 
+    weightCol="classWeight", 
+    family="multinomial",
+    maxIter=100
+)
+```
+
+
+
+#### Model Configuration & Tuning
+
+```{python}
+
+# 3. Build the Pipeline
+# Pipeline flow: Raw Data -> Vector -> Scaled Vector -> Logistic Regression
+pipeline_lr = Pipeline(stages=[assembler, scaler, lr])
+
+# 4. Create Parameter Grid (Hyperparameter Tuning)
+# - regParam: Controls regularization strength (prevents overfitting).
+paramGrid_lr = ParamGridBuilder() \
+    .addGrid(lr.regParam, [0.01, 0.1]) \
+    .addGrid(lr.elasticNetParam, [0.0, 0.5]) \
+    .build()
+
+# 5. Cross-Validation Setup
+# We use the same 3-fold strategy as the Random Forest for consistency.
+cv_lr = CrossValidator(
+    estimator=pipeline_lr,
+    estimatorParamMaps=paramGrid_lr,
+    evaluator=evaluator, # Reusing the F1 evaluator from previous model
+    numFolds=3,
+    parallelism=2
+)
+```
+
+#### Model Training & Evaluation
+
+```{python}
+
+# 6. Train the Model
+print(">> Training Advanced Logistic Regression (with Scaling & CV)...")
+cv_model_lr = cv_lr.fit(train_data)
+best_model_lr = cv_model_lr.bestModel
+
+print(">> Training Complete.")
+
+# --- Save the Best LR Model ---
+model_path_lr = "stellar_classifier_lr_v1"
+best_model_lr.write().overwrite().save(model_path_lr)
+print(f">> Model saved to {model_path_lr}")
+
+# --- Metrics Evaluation ---
+predictions_lr = best_model_lr.transform(test_data)
+
+acc_eval = MulticlassClassificationEvaluator(metricName="accuracy")
+f1_eval = MulticlassClassificationEvaluator(metricName="f1")
+
+print("\n=== LOGISTIC REGRESSION RESULTS ===")
+print(f"Accuracy: {acc_eval.evaluate(predictions_lr):.2%}")
+print(f"Weighted F1 Score: {f1_eval.evaluate(predictions_lr):.2%}")
+
+# --- Advanced Analysis: Extract Coefficients ---
+# This counts as "Explaining the algorithm" for your report.
+best_lr_stage = best_model_lr.stages[-1] # Extract the LR stage from pipeline
+
+print("\n>> Model Coefficients (Linear Weights):")
+# Coefficients is a matrix: 3 classes x 5 features
+coeff_matrix = best_lr_stage.coefficientMatrix
+# Intercepts: 3 values (one per class)
+intercepts = best_lr_stage.interceptVector
+
+# Print coefficients for the White Dwarf class (Label 2.0)
+# This helps explain what makes a star a "White Dwarf" according to the math.
+wd_coeffs = coeff_matrix.toArray()[2] 
+print(f"White Dwarf Coefficients (vs Features): {wd_coeffs}")
+
+```
+
+#### Visualizing Predictions
+
+
+:::{.column-page}
+```{python}
+#| label: fig-side-by-side
+#| fig-cap: "Side-by-Side Visualization of Predictions vs Truth"
+#| fig-subcap: 
+#|   - "Error Analysis"
+#|   - "Model Predictions"
+#| layout-ncol: 2
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pyspark.sql import functions as F
+
+# --- 1. Data Preparation ---
+# print(">> Collecting data for Visualization...")
+# Assuming 'predictions_lr' is your existing Spark DataFrame
+df_viz = predictions_lr.select("bp_rp", "abs_mag", "label", "prediction") \
+    .sample(False, 0.2, seed=42) \
+    .toPandas()
+
+# --- Logic for Plot A: Error Analysis ---
+df_viz["is_correct"] = df_viz["label"] == df_viz["prediction"]
+df_viz["Prediction Status"] = df_viz["is_correct"].map({True: "Correct", False: "Misclassified"})
+
+# --- Logic for Plot B: Prediction Classes ---
+label_map = {0.0: "Main Sequence", 1.0: "Red Giant", 2.0: "White Dwarf"}
+df_viz["Predicted Star Type"] = df_viz["prediction"].map(label_map)
+
+# Set Global Style
+sns.set_style("whitegrid")
+custom_red = "#e63946"
+custom_med_blue = "#457b9d"
+custom_dark_blue = "#1d3557"
+
+
+# ==========================================
+#   PLOT 1: The Error Map
+# ==========================================
+fig1, ax1 = plt.subplots(figsize=(8, 6))
+
+error_palette = {"Correct": custom_dark_blue, "Misclassified": custom_red}
+
+sns.scatterplot(
+    data=df_viz,
+    x="bp_rp",
+    y="abs_mag",
+    hue="Prediction Status",
+    palette=error_palette,
+    s=15, # Increased size slightly since the plot is bigger now
+    alpha=0.5,
+    edgecolor=None,
+    ax=ax1
+)
+
+ax1.set_title("A. Error Analysis (Where did it fail?)", fontsize=14, weight='bold')
+ax1.legend(loc="upper right", frameon=True, edgecolor='black', title="Accuracy", fontsize=10, title_fontsize=11)
+
+# Formatting
+ax1.invert_yaxis()
+ax1.set_xlabel("Color Index ($G_{BP} - G_{RP}$)", fontsize=12)
+ax1.set_ylabel("Absolute Magnitude ($M_G$)", fontsize=12)
+ax1.grid(True, linestyle='-', alpha=0.3)
+ax1.tick_params(axis='both', which='major', labelsize=10)
+
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================
+#   PLOT 2: The Prediction Map
+# ==========================================
+fig2, ax2 = plt.subplots(figsize=(8, 6))
+
+model_palette = {
+    "Red Giant": custom_red, 
+    "Main Sequence": custom_med_blue,
+    "White Dwarf": custom_dark_blue  
+}
+
+sns.scatterplot(
+    data=df_viz,
+    x="bp_rp",
+    y="abs_mag",
+    hue="Predicted Star Type",
+    palette=model_palette,
+    hue_order=["Main Sequence", "Red Giant", "White Dwarf"],
+    s=15,
+    alpha=0.5,
+    edgecolor=None,
+    ax=ax2
+)
+
+ax2.set_title("B. Model Predictions (Linear Boundaries)", fontsize=14, weight='bold')
+ax2.legend(loc="upper right", frameon=True, edgecolor='black', title="Predicted Class", fontsize=10, title_fontsize=11)
+
+# Formatting
+ax2.invert_yaxis()
+ax2.set_xlabel("Color Index ($G_{BP} - G_{RP}$)", fontsize=12)
+ax2.set_ylabel("Absolute Magnitude ($M_G$)", fontsize=12)
+ax2.grid(True, linestyle='-', alpha=0.3)
+ax2.tick_params(axis='both', which='major', labelsize=10)
+
+plt.tight_layout()
+plt.show()
+
+```
+:::
+
+
+### Phase 3: Comparing Models
+
+```{python}
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+
+# --- 1. Define Evaluation Function ---
+def get_metrics(predictions, model_name):
+    # Initialize evaluators
+    acc_eval = MulticlassClassificationEvaluator(metricName="accuracy")
+    f1_eval = MulticlassClassificationEvaluator(metricName="f1")
+    prec_eval = MulticlassClassificationEvaluator(metricName="weightedPrecision")
+    rec_eval = MulticlassClassificationEvaluator(metricName="weightedRecall")
+    
+    # Calculate scores
+    return {
+        "Model": model_name,
+        "Accuracy": acc_eval.evaluate(predictions),
+        "F1 Score": f1_eval.evaluate(predictions),
+        "Precision": prec_eval.evaluate(predictions),
+        "Recall": rec_eval.evaluate(predictions)
+    }
+
+# --- 2. Collect Data ---
+print(">> Calculating metrics for comparison...")
+# Assuming 'predictions' is from Random Forest and 'predictions_lr' is from Logistic Regression
+metrics_rf = get_metrics(predictions, "Random Forest")
+metrics_lr = get_metrics(predictions_lr, "Logistic Regression")
+
+# Create DataFrame
+df_metrics = pd.DataFrame([metrics_rf, metrics_lr])
+
+# Melt for plotting (Long format)
+df_melted = df_metrics.melt(id_vars="Model", var_name="Metric", value_name="Score")
+```
+
+:::{.column-page}
+```{python}
+#| label: fig-comparison
+#| fig-cap: "Model Comparison"
+
+# --- 3. Create Comparison Visual ---
+plt.figure(figsize=(10, 6))
+sns.set_style("whitegrid")
+
+# Custom Palette: Dark Blue vs Red
+custom_palette = ["#1d3557", "#e63946"] 
+
+ax = sns.barplot(
+    data=df_melted,
+    x="Metric",
+    y="Score",
+    hue="Model",
+    palette=custom_palette,
+    edgecolor="black",
+    linewidth=0.8
+)
+
+# --- 4. Aesthetics ---
+plt.title("Performance Showdown: Random Forest vs. Logistic Regression", fontsize=14, weight='bold', pad=15)
+plt.ylabel("Score (0.0 - 1.0)", fontsize=12)
+plt.xlabel("Evaluation Metric", fontsize=12)
+plt.ylim(0.8, 1.0) # Zoom in to show differences clearly (Adjust if scores are lower)
+plt.legend(title="Algorithm", loc="lower right", frameon=True, edgecolor='black')
+
+# Add values on top of bars
+for container in ax.containers:
+    ax.bar_label(container, fmt='%.3f', padding=3, fontsize=10)
+
+plt.tight_layout()
+plt.show()
+
+# Print Table for Report
+print("\n=== FINAL COMPARISON TABLE ===")
+print(df_metrics.round(4))
+```
+:::
+
+#### Comparision Analysis
+
+Conclusion: Which Model Performed Better?
+
+The Random Forest Classifier is the superior model for this prediction goal.
+
+While the Logistic Regression provides a useful baseline and helps explain linear relationships , the Random Forest is better option to the specific scientific nature of the data.
+
+- Performance: As shown in the bar chart, the Random Forest model consistently achieves higher scores across F1 and Accuracy.
+- Reasoning: The physical boundaries between star types (specifically Main Sequence vs. Red Giants) are curved, not straight. Random Forest can perform well on these complex.
+- Weakness of Logistic Regression: The Logistic Regression model attempts to draw a straight line through the data. As seen in the "Error Map" previously, this linear boundary cuts through the curved Red Giant branch, leading to higher misclassification rates in that specific region.
+
+## Jayrup
+
+The objective of this task is to predict stellar `parallax` using features derived from the Gaia dataset. Parallax is a continuous variable and therefore the task is formulated as a regression problem. Predicting parallax allows indirect estimation of *stellar distance*, which is a fundamental problem in astrophysics.
+
+#### Understanding the data
+
+The following features were selected based on their relevance and exploratory data analysis:
+
+- **Total Proper Motion($\mu$)**:
+  Computed as 
+  $$
+  \mu = \sqrt{\text{pmra}^2 + \text{pmra}^2}
+  $$
+
+  Proper motion provides kinematic information related to stellar distance.
+
+- **Photometric G-band Magnitude (`phot_g_mean_mag`)**:
+  Represents apparent brightness, which is distance dependent.
+
+- **Colour Index (`bp_rp`)**:
+  Used as a proxy for stellar temperature and population type.
+
+- **Effective Temperature (`teff_gspphot`)**:
+Provides additional physical context to distinguish between stellar populations.
+
+```{python}
+spark = SparkSession.builder \
+    .appName("Parallax_Prediction") \
+    .config("spark.driver.memory", "4g") \
+    .getOrCreate()
+
+df = spark.read.parquet("../data/gaia_100pc.parquet")
+
+# Show basic stats
+df.select('pmra', 'pmdec', 'parallax').describe().show()
+
+# Count total rows
+print(f"Total rows: {df.count()}")
+```
+
+```{python}
+from pyspark.sql.functions import sqrt, col
+
+# Calculate total proper motion magnitude
+df = df.withColumn("total_motion", sqrt(col("pmra")**2 + col("pmdec")**2))
+
+# Check the results
+df.select('pmra', 'pmdec', 'total_motion').describe().show()
+```
+
+#### Visualizing the data
+:::{.column-page}
+```{python}
+#| label: total-motion-plot
+#| fig-cap: "Distribution of Total Motion"
+#| fig-subcap: 
+#|   - "Distribution of Total Motion"
+#|   - "Distribution of Total Motion (Log Scale)"
+#| layout-ncol: 2
+from pyspark.sql.functions import col, sqrt, mean, stddev
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# First, let's calculate total motion
+df = df.withColumn("total_motion", sqrt(col("pmra")**2 + col("pmdec")**2))
+
+# Convert to Pandas for plotting
+pdf = df.select("total_motion").toPandas()
+
+# Plot using Seaborn or Matplotlib
+# plt.figure(figsize=(10, 6))
+sns.histplot(pdf["total_motion"], bins=100, kde=True)
+plt.show()
+import numpy as np
+
+# Create 100 bins spaced logarithmically from the min to the max of your data
+bins = np.logspace(np.log10(pdf["total_motion"].min()), 
+                   np.log10(pdf["total_motion"].max()), 
+                   100)
+
+# plt.figure(figsize=(10, 6))
+plt.hist(pdf["total_motion"], bins=bins)
+plt.xscale('log') 
+plt.xlabel("Total Motion (Log Scale)")
+plt.ylabel("Frequency")
+plt.show()
+```
+:::
+
+We can gain the following insights from the plots:
+
+- The linear plot (figure 1) exhibits a massive "right-skew," compressing 99% of the data into the first bin. This causes the model to over-weight the few extreme outliers (high motion stars) while treating the vast majority of the dataset as having near-zero variance.
+
+- The log transformation (Figure 2) reveals that the underlying data distribution is actually bimodal (two distinct peaks). The linear plot mathematically hid this physical distinction between the background stars (first peak) and the nearby high-proper-motion stars (second peak).
+
+- Regression algorithms (especially Linear Regression) assume constant variance across the range of values. The raw proper motion spans several orders of magnitude (from 0.01 to 10,000+); applying a log transform stabilizes the variance, making the error metrics (RMSE) meaningful across the entire dataset rather than just for the fastest stars.
+
+
+```{python}
+# Filter for extreme outliers based on the plot's X-axis
+outliers_df = df.filter(col("total_motion") > 1000)
+
+print(f"Found {outliers_df.count()} extreme outliers.")
+outliers_df.sort(col("total_motion").desc()).show(10)
+```
+
+This confirms we are looking at real, high-quality data:
+- **Barnard's Star**: The first outlier in your table (Source ID `4472832130942575872`, total_motion `~10,393`) is almost certainly Barnard's Star, which has the highest proper motion of any known star.
+- **The 100pc limit**: Min parallax is ~10.0, which corresponds exactly to a distance of 100 parsecs ($d = 1000/ \pi$), matching your filename gaia_100pc.
+
+
+#### Preprocessing
+To reduce skewness and improve model stability, the following logarithmic transformations.
+
+```{python}
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.regression import LinearRegression, RandomForestRegressor
+from pyspark.ml.regression import LinearRegressionModel, RandomForestRegressionModel
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.sql.functions import log10
+
+
+# Add log columns to handle the huge range of motion
+df_ml = df.withColumn("log_motion", log10(col("total_motion") + 1))
+df_ml = df_ml.withColumn("log_parallax", log10(col("parallax") + 1))
+
+df_ml = df_ml.na.drop(subset=["bp_rp", "phot_g_mean_mag", "total_motion","teff_gspphot"])
+
+# Prepare Features (Using the bimodal motion and magnitude)
+assembler = VectorAssembler(
+    inputCols=["log_motion", "phot_g_mean_mag","bp_rp"], 
+    outputCol="features", 
+    handleInvalid="skip"
+)
+data = assembler.transform(df_ml)
+
+# Split into Training (80%) and Testing (20%)
+train_df, test_df = data.randomSplit([0.8, 0.2], seed=42)
+
+lr_path = "models/gaia_linear_regression"
+rf_path = "models/gaia_random_forest"
+
+if os.path.exists(lr_path):
+  # Load Model A: Linear Regression
+  lr_model = LinearRegressionModel.load(lr_path)
+else:
+  # Train Model A: Linear Regression
+  lr = LinearRegression(featuresCol="features", labelCol="log_parallax")
+  lr_model = lr.fit(train_df)
+
+  lr_model.write().overwrite().save(lr_path)
+  print(f"Model saved to {lr_path}")
+
+if os.path.exists(rf_path):
+  # Load Model B: Random Forest
+  rf_model = RandomForestRegressionModel.load(rf_path)
+else:
+  # Train Model B: Random Forest
+  rf = RandomForestRegressor(
+      featuresCol="features",
+      labelCol="log_parallax",
+      numTrees=100,
+      maxDepth=12,
+      # minInstancesPerNode=20,
+      # featureSubsetStrategy="sqrt",
+      seed=42
+  )
+  rf_model = rf.fit(train_df)
+
+  rf_model.write().overwrite().save(rf_path)
+  print(f"Model saved to {rf_path}")
+
+# 5. Get Predictions
+lr_pred = lr_model.transform(test_df)
+rf_pred = rf_model.transform(test_df)
+
+# 6. Evaluate
+eval_r2 = RegressionEvaluator(labelCol="log_parallax", predictionCol="prediction", metricName="r2")
+eval_rmse = RegressionEvaluator(labelCol="log_parallax", predictionCol="prediction", metricName="rmse")
+
+print("Linear Regression R2:", eval_r2.evaluate(lr_pred))
+print("Random Forest R2:   ", eval_r2.evaluate(rf_pred))
+print("-" * 30)
+print("Linear Regression RMSE:", eval_rmse.evaluate(lr_pred))
+print("Random Forest RMSE:   ", eval_rmse.evaluate(rf_pred))
+```
+
+:::{.column-page}
+```{python}
+#| label: prediction-plot
+#| fig-cap: "Random Forest Predictions vs Linear Regression Predictions"
+#| fig-subcap: 
+#|   - "Random Forest Predictions vs True Values"
+#|   - "Linear Regression Predictions vs True Values"
+#| layout-ncol: 2
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Convert Spark DataFrame to Pandas for plotting
+pdf = rf_pred.select("log_parallax", "prediction", "bp_rp").sample(fraction=0.05, seed=42).toPandas()
+
+# Scatter plot: predicted vs true log_parallax
+plt.figure(figsize=(8, 6))
+scatter = plt.scatter(
+    pdf["log_parallax"],
+    pdf["prediction"],
+    c=pdf["bp_rp"],        # color by bp_rp
+    cmap="viridis",
+    s=10,
+    alpha=0.6
+)
+plt.plot([pdf["log_parallax"].min(), pdf["log_parallax"].max()],
+         [pdf["log_parallax"].min(), pdf["log_parallax"].max()],
+         color="red", linestyle="--", label="y = x")
+plt.xlabel("True log(Parallax)")
+plt.ylabel("Predicted log(Parallax)")
+plt.colorbar(scatter, label="bp_rp")
+plt.legend()
+plt.show()
+
+pdf_lr = lr_pred.select("log_parallax", "prediction", "bp_rp").sample(fraction=0.05, seed=42).toPandas()
+
+plt.figure(figsize=(8,6))
+sns.scatterplot(
+    x=pdf_lr["log_parallax"], y=pdf_lr["prediction"],
+    hue=pdf_lr["bp_rp"], palette="coolwarm", alpha=0.6, s=10
+)
+plt.plot([pdf_lr["log_parallax"].min(), pdf_lr["log_parallax"].max()],
+         [pdf_lr["log_parallax"].min(), pdf_lr["log_parallax"].max()],
+         color="black", linestyle="--", label="y = x")
+plt.xlabel("True log(Parallax)")
+plt.ylabel("Predicted log(Parallax)")
+plt.legend()
+plt.show()
+
+```
+:::
+
+# LSEP (Legal, Social, Ethical, Professional)
+
+Since we are analyzing stars, the standard "GDPR" and "Data Privacy" arguments are not relevant here. Instead, we focus on **Bias, Reproducibility, and Environmental Impact**.
+
+## Algorithmic Bias and the "Malmquist Bias" (Ethical & Social)
+While astronomical data does not involve human subjects, the analysis highlights a critical ethical issue in Big Data: **Selection Bias**.
+
+* **The Issue:** Our analysis relied heavily on the "Local Bubble" dataset for high precision analysis. By filtering for stars with high parallax signal-to-noise ratios, we inherently excluded fainter objects (Red Dwarfs) that exist at the same distance but lack sufficient brightness for detection.
+* **Implication:** In a social context, this mirrors "Data Invisibility." Fainter stars are excluded from the model because they are harder to measure. Our model effectively "erased" the most common type of star in the galaxy ($M-dwarfs$) to optimize for accuracy ($R^2$), demonstrating how data cleaning can inadvertently enforce systemic bias.
+
+## Environmental Impact of Big Data (Social & Ethical)
+The processing of the Gaia dataset (1.8 billion rows) requires significant computational power.
+
+* **The Cost:** Training the Gradient Boosted Tree (GBT) and performing Cross-Validation on Spark clusters consumes electricity. If we trains inefficient grid-search models on cloud infrastructure (AWS/Azure), the cumulative carbon footprint becomes non-trivial.
+* **Mitigation:** We utilized `parquet` columnar storage and "push-down predicates" (filtering data *before* loading it into RAM) to minimize computational overhead.
+
+## Professional Responsibility and Reproducibility
+
+* **Open Science:** The Gaia DR3 dataset is public property of the European Space Agency (ESA). Professional ethics dictate that we must credit the source and ensure our results are reproducible.
+* **Implementation:** We adhered to this by containerizing the workflow. Unlike proprietary "black box" analyses, our use of open-source tools (Apache Spark, PySpark, python environment) ensures that the code can be audited and the scientific claims (such as the binary star candidates) can be verified by peers. We avoided "hacking" the *p-values* or $R^2$ scores (p-hacking) and presented the residual errors transparently.
 
