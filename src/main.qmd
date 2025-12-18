@@ -484,8 +484,6 @@ To clearly present the results of the analysis, two visualisations were produced
 ```{python}
 #| label: query-1.2
 #| fig-cap: "Population Mix (Stacked Bar Chart)"
-# 1. Convert your Spark results to Pandas
-# (Assuming df_results is the dataframe from your last query)
 pdf = df_results.toPandas()
 
 # 2. Setup the Data for Plotting
@@ -1472,7 +1470,6 @@ spark = SparkSession.builder \
     .config("spark.driver.memory", "4g") \
     .getOrCreate()
 
-# Load your 100pc data
 df = spark.read.parquet("../data/gaia_100pc.parquet")
 
 # Add coarse sky bins (1° × 1°) - simple but effective
@@ -2662,7 +2659,6 @@ print(f"Accuracy: {acc_eval.evaluate(predictions_lr):.2%}")
 print(f"Weighted F1 Score: {f1_eval.evaluate(predictions_lr):.2%}")
 
 # --- Advanced Analysis: Extract Coefficients ---
-# This counts as "Explaining the algorithm" for your report.
 best_lr_stage = best_model_lr.stages[-1] # Extract the LR stage from pipeline
 
 print("\n>> Model Coefficients (Linear Weights):")
@@ -2696,7 +2692,6 @@ from pyspark.sql import functions as F
 
 # --- 1. Data Preparation ---
 # print(">> Collecting data for Visualization...")
-# Assuming 'predictions_lr' is your existing Spark DataFrame
 df_viz = predictions_lr.select("bp_rp", "abs_mag", "label", "prediction") \
     .sample(False, 0.2, seed=42) \
     .toPandas()
@@ -2893,9 +2888,10 @@ The following features were selected based on their relevance and exploratory da
 
 - **Total Proper Motion($\mu$)**:
   Computed as 
-  $$
-  \mu = \sqrt{\text{pmra}^2 + \text{pmra}^2}
-  $$
+
+$$
+\mu = \sqrt{\text{pmra}^2 + \text{pmra}^2}
+$$
 
   Proper motion provides kinematic information related to stellar distance.
 
@@ -2958,7 +2954,7 @@ sns.histplot(pdf["total_motion"], bins=100, kde=True)
 plt.show()
 import numpy as np
 
-# Create 100 bins spaced logarithmically from the min to the max of your data
+# Create 100 bins spaced logarithmically from the min to the max of data
 bins = np.logspace(np.log10(pdf["total_motion"].min()), 
                    np.log10(pdf["total_motion"].max()), 
                    100)
@@ -2990,11 +2986,11 @@ outliers_df.sort(col("total_motion").desc()).show(10)
 ```
 
 This confirms we are looking at real, high-quality data:
-- **Barnard's Star**: The first outlier in your table (Source ID `4472832130942575872`, total_motion `~10,393`) is almost certainly Barnard's Star, which has the highest proper motion of any known star.
-- **The 100pc limit**: Min parallax is ~10.0, which corresponds exactly to a distance of 100 parsecs ($d = 1000/ \pi$), matching your filename gaia_100pc.
+- **Barnard's Star**: The first outlier in our table (Source ID `4472832130942575872`, total_motion `~10,393`) is almost certainly Barnard's Star, which has the highest proper motion of any known star.
+- **The 100pc limit**: Min parallax is ~10.0, which corresponds exactly to a distance of 100 parsecs ($d = 1000/ \pi$), matching our filename gaia_100pc.
 
 
-#### Preprocessing
+#### Processing
 To reduce skewness and improve model stability, the following logarithmic transformations have been applied.
 
 ```{python}
